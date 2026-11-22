@@ -8,6 +8,8 @@ import {
   Users,
   UserCog,
   ChartNoAxesCombined,
+  ClipboardList,
+  Receipt,
   LogOut,
 } from "lucide-react";
 
@@ -15,6 +17,7 @@ import { Brand } from "../ui";
 import {
   clearAdminSession,
   getAdminSession,
+  storeAdminSession,
   validateAdminSession,
 } from "../../services/adminAuthService";
 
@@ -25,6 +28,8 @@ const navItems = [
   { to: "/admin/participants", label: "Participants", icon: Users },
   { to: "/admin/volunteers", label: "Volunteers", icon: UserCog },
   { to: "/admin/reports", label: "Reports", icon: ChartNoAxesCombined },
+  { to: "/admin/rounds", label: "Rounds", icon: ClipboardList },
+  { to: "/admin/transactions", label: "Transactions", icon: Receipt },
 ];
 
 export default function AdminLayout() {
@@ -43,10 +48,12 @@ export default function AdminLayout() {
     setChecking(true);
     setValidationError("");
     try {
-      await validateAdminSession(storedSession.token);
-      setSession(storedSession);
+      const admin = await validateAdminSession(storedSession.token);
+      const refreshedSession = { ...storedSession, admin };
+      storeAdminSession(refreshedSession);
+      setSession(refreshedSession);
     } catch (error) {
-      if (error.code === "SESSION_EXPIRED") {
+      if (error.code === "SESSION_EXPIRED" || error.code === "INVALID_SESSION") {
         clearAdminSession();
         navigate("/admin/login", { replace: true });
       } else {

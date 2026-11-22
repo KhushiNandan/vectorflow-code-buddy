@@ -1,77 +1,76 @@
-import { useState } from "react";
 import {
   Users,
   Clock,
   CheckCircle2,
   ClipboardList,
   Search,
-  ArrowRight,
-  Play,
   CircleUserRound,
 } from "lucide-react";
+import { useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./volunteer-dashboard.css";
-import TimerPanel from "./TimerPanel";
-
-const mockParticipants = [
-  {
-    id: 1,
-    name: "Aarav Sharma",
-    usn: "4VV23CS001",
-    level: 3,
-    status: "PENDING",
-  },
-  {
-    id: 2,
-    name: "Ananya Rao",
-    usn: "4VV23CS002",
-    level: 5,
-    status: "COMPLETED",
-  },
-  {
-    id: 3,
-    name: "Rohan Kumar",
-    usn: "4VV23CS003",
-    level: 2,
-    status: "PENDING",
-  },
-  {
-    id: 4,
-    name: "Priya Nair",
-    usn: "4VV23CS004",
-    level: 4,
-    status: "COMPLETED",
-  },
-];
+import { getVolunteerSession } from "../../services/volunteerAuthService";
+import { getVolunteerStudentRound } from "../../services/volunteerRoundService";
 
 export default function VolunteerDashboard() {
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("ALL");
+  const volunteerName = getVolunteerSession()?.volunteer?.name || "Volunteer";
+  const navigate = useNavigate();
+  const [usn, setUsn] = useState("");
+  const [lookupPending, setLookupPending] = useState(false);
+  const [lookupError, setLookupError] = useState("");
+  const lookupInProgress = useRef(false);
 
-  const pendingCount = mockParticipants.filter(
-    (p) => p.status === "PENDING"
-  ).length;
+  async function handleLookup(event) {
+    event.preventDefault();
+    if (lookupInProgress.current) return;
 
-  const completedCount = mockParticipants.filter(
-    (p) => p.status === "COMPLETED"
-  ).length;
+    const trimmedUsn = usn.trim();
+    if (!trimmedUsn) {
+      setLookupError("Enter a USN to look up a participant.");
+      return;
+    }
 
-  const filteredParticipants = mockParticipants.filter((participant) => {
-    const matchesSearch =
-      participant.name.toLowerCase().includes(search.toLowerCase()) ||
-      participant.usn.toLowerCase().includes(search.toLowerCase());
+    lookupInProgress.current = true;
+    setLookupPending(true);
+    setLookupError("");
 
-    const matchesFilter =
-      filter === "ALL" || participant.status === filter;
+    try {
+      const response = await getVolunteerStudentRound(trimmedUsn);
+      navigate("/volunteer/evaluations", { state: { lookupResult: response } });
+    } catch (error) {
+      const message = error?.message || "The participant lookup failed. Please try again.";
+      const codeMessages = {
+        MISSING_USN: `USN is required: ${message}`,
+        INVALID_USN_FORMAT: `The USN format is invalid: ${message}`,
+        STUDENT_NOT_FOUND: `No registered participant was found for that USN: ${message}`,
+        REGISTRATION_INCOMPLETE: `The participant registration is incomplete: ${message}`,
+        INVALID_STUDENT_LEVEL: `The participant's current level is invalid: ${message}`,
+        ROUND_NOT_ALLOCATED: `No round is currently allocated for this participant: ${message}`,
+      };
 
-    return matchesSearch && matchesFilter;
-  });
+      if (error?.kind === "network") {
+        setLookupError(`Network error. Check your connection and retry. ${message}`);
+      } else if (codeMessages[error?.code]) {
+        setLookupError(codeMessages[error.code]);
+      } else if (error?.status >= 500 || error?.code === "INTERNAL_SERVER_ERROR") {
+        setLookupError(`Server error. Please retry the lookup. ${message}`);
+      } else if (error?.kind === "http" || error?.kind === "api") {
+        setLookupError(message);
+      } else {
+        setLookupError(`The lookup could not be completed. Please retry. ${message}`);
+      }
+    } finally {
+      lookupInProgress.current = false;
+      setLookupPending(false);
+    }
+  }
 
   return (
     <div className="vol-dashboard">
       <header className="vol-dashboard-header">
         <div>
           <p className="vol-eyebrow">VOLUNTEER PANEL</p>
-          <h1>Welcome back, Meera!</h1>
+          <h1>Welcome back, {volunteerName}!</h1>
           <p className="vol-subtitle">
             Here's an overview of your assigned participants and evaluations.
           </p>
@@ -79,40 +78,34 @@ export default function VolunteerDashboard() {
 
         <div className="vol-profile-chip">
           <CircleUserRound size={20} />
-          <span>Meera Sharma</span>
+          <span>{volunteerName}</span>
         </div>
       </header>
 
-      <div className="vol-status-banner">
-        <div className="vol-status-dot" />
-        <div>
-          <strong>Competition is in progress</strong>
-          <p>Stay ready for participant evaluations.</p>
-        </div>
-        <span className="vol-live-label">LIVE</span>
-      </div>
-      <TimerPanel level={1} />
+      <p className="vol-subtitle" role="status">
+        Look up a registered participant by USN to view their current round.
+      </p>
 
       <div className="vol-stats-grid">
         <div className="vol-stat-card">
           <div className="vol-stat-icon"><Users size={21} /></div>
           <p>Assigned Participants</p>
-          <h2>{mockParticipants.length}</h2>
-          <span>Total participants assigned to you</span>
+          <h2>—</h2>
+          <span>Available when the assigned roster API is verified</span>
         </div>
 
         <div className="vol-stat-card">
           <div className="vol-stat-icon"><Clock size={21} /></div>
           <p>Pending Evaluations</p>
-          <h2>{pendingCount}</h2>
-          <span>Waiting for evaluation</span>
+          <h2>—</h2>
+          <span>Awaiting a verified evaluation status contract</span>
         </div>
 
         <div className="vol-stat-card">
           <div className="vol-stat-icon"><CheckCircle2 size={21} /></div>
           <p>Completed Evaluations</p>
-          <h2>{completedCount}</h2>
-          <span>Evaluations completed</span>
+          <h2>—</h2>
+          <span>Awaiting a verified evaluation status contract</span>
         </div>
 
         <div className="vol-stat-card">
@@ -122,26 +115,8 @@ export default function VolunteerDashboard() {
 
   <p>Evaluation Progress</p>
 
-  <h2>
-    {completedCount}/{mockParticipants.length}
-  </h2>
-
-  <div className="vol-progress-track">
-    <div
-      className="vol-progress-fill"
-      style={{
-        width: `${
-          (completedCount / mockParticipants.length) * 100
-        }%`,
-      }}
-    />
-  </div>
-
-  <span>
-    {Math.round(
-      (completedCount / mockParticipants.length) * 100
-    )}% evaluations completed
-  </span>
+  <h2>—</h2>
+  <span>Available when evaluation status data is verified</span>
 </div>
       </div>
 
@@ -149,36 +124,47 @@ export default function VolunteerDashboard() {
         <div className="vol-section-heading">
           <div>
             <p className="vol-eyebrow">YOUR WORKSPACE</p>
-            <h2>Assigned Participants</h2>
-            <p>View participant details and evaluation status.</p>
+            <h2>Participant Lookup</h2>
+            <p>Enter a participant's USN to retrieve their current round.</p>
           </div>
 
           <span className="vol-count">
-            {filteredParticipants.length} participants
+            USN lookup
           </span>
         </div>
 
-        <div className="vol-toolbar">
+        <form className="vol-toolbar" onSubmit={handleLookup}>
           <div className="vol-search">
             <Search size={17} />
             <input
               type="text"
-              placeholder="Search by name or USN..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Enter participant USN..."
+              value={usn}
+              onChange={(event) => {
+                setUsn(event.target.value);
+                if (lookupError) setLookupError("");
+              }}
+              disabled={lookupPending}
+              aria-label="Participant USN"
+              aria-invalid={Boolean(lookupError)}
+              aria-describedby={lookupError ? "volunteer-lookup-error" : undefined}
             />
           </div>
 
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="vol-filter"
-          >
-            <option value="ALL">All Participants</option>
-            <option value="PENDING">Pending</option>
-            <option value="COMPLETED">Completed</option>
-          </select>
-        </div>
+          <button type="submit" className="vol-filter" disabled={lookupPending}>
+            {lookupPending
+              ? "Looking up…"
+              : lookupError
+                ? "Retry lookup"
+                : "Look up participant"}
+          </button>
+        </form>
+
+        {lookupError && (
+          <p id="volunteer-lookup-error" role="alert">
+            {lookupError}
+          </p>
+        )}
 
         <div className="vol-table-wrapper">
           <table className="vol-table">
@@ -193,54 +179,11 @@ export default function VolunteerDashboard() {
             </thead>
 
             <tbody>
-              {filteredParticipants.map((participant) => (
-                <tr key={participant.id}>
-                  <td className="vol-participant-name">
-                    {participant.name}
-                  </td>
-                  <td>{participant.usn}</td>
-                  <td>Level {participant.level}</td>
-                  <td>
-                    <span
-                      className={`vol-status-tag ${
-                        participant.status === "PENDING"
-                          ? "vol-pending"
-                          : "vol-completed"
-                      }`}
-                    >
-                      {participant.status}
-                    </span>
-                  </td>
-                  <td>
-                    <button
-                      className="vol-action-button"
-                      onClick={() =>
-                        alert(
-                          `Evaluation screen for ${participant.name} will be built next.`
-                        )
-                      }
-                    >
-                      {participant.status === "PENDING" ? (
-                        <>
-                          <Play size={14} /> Evaluate
-                        </>
-                      ) : (
-                        <>
-                          View Details <ArrowRight size={14} />
-                        </>
-                      )}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-
-              {filteredParticipants.length === 0 && (
-                <tr>
-                  <td colSpan="5" className="vol-empty-state">
-                    No participants found.
-                  </td>
-                </tr>
-              )}
+              <tr>
+                <td colSpan="5" className="vol-empty-state" role="status">
+                  Enter a USN above to retrieve one participant's round details.
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>

@@ -1,70 +1,112 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Play,
-  Pause,
   RotateCcw,
   Timer,
   AlertCircle,
   CheckCircle2,
+  Plus,
 } from "lucide-react";
 import "./timer.css";
 
-export default function TimerPanel({ level = 1 }) {
-  const duration = level <= 3 ? 180 : 300;
+function formatTime(value) {
+  const totalSeconds = Math.max(0, Math.floor(value));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
 
-  const [seconds, setSeconds] = useState(duration);
-  const [isRunning, setIsRunning] = useState(false);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatDeadline(value) {
+  if (!value) return "Unavailable";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unavailable";
+
+  return date.toLocaleString();
+}
+
+export default function TimerPanel({
+  levelNumber,
+  roundStatus,
+  remainingSeconds,
+  deadline,
+  isExpired,
+  canStart = false,
+  canExtend = false,
+  isStarting = false,
+  isExtending = false,
+  isBusy = false,
+  onStart,
+  onExtend,
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const [extensionSeconds, setExtensionSeconds] = useState("");
+  const [extensionReason, setExtensionReason] = useState("");
+  const [extensionError, setExtensionError] = useState("");
 
   useEffect(() => {
-    setIsRunning(false);
-    setSeconds(duration);
-  }, [duration]);
+    if (roundStatus !== "inProgress" || isExpired === true || !deadline) return undefined;
 
-  useEffect(() => {
-    if (!isRunning) return;
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [deadline, isExpired, roundStatus]);
 
-    const interval = setInterval(() => {
-      setSeconds((previous) => {
-        if (previous <= 1) {
-          setIsRunning(false);
-          return 0;
-        }
+  const deadlineMilliseconds = deadline ? new Date(deadline).getTime() : NaN;
+  const hasDeadline = Number.isFinite(deadlineMilliseconds);
+  const hasRemainingTime =
+    typeof remainingSeconds === "number" && Number.isFinite(remainingSeconds);
+  const isFinished = isExpired === true;
+  const countdownSeconds = useMemo(() => {
+    if (isFinished) return 0;
+    if (roundStatus === "inProgress" && hasDeadline) {
+      return Math.max(0, Math.ceil((deadlineMilliseconds - now) / 1000));
+    }
+    return hasRemainingTime ? Math.max(0, remainingSeconds) : null;
+  }, [
+    deadlineMilliseconds,
+    hasDeadline,
+    hasRemainingTime,
+    isFinished,
+    now,
+    remainingSeconds,
+    roundStatus,
+  ]);
+  const canDisplayCountdown = countdownSeconds !== null;
+  const isAwaitingBackendExpiration =
+    roundStatus === "inProgress" && countdownSeconds === 0 && !isFinished;
+  const isWarning =
+    canDisplayCountdown && !isFinished && countdownSeconds <= 30 && countdownSeconds > 0;
+  const extensionValue = Number(extensionSeconds);
+  const isValidExtension =
+    extensionSeconds.trim() !== "" &&
+    Number.isSafeInteger(extensionValue) &&
+    extensionValue > 0;
 
-        return previous - 1;
-      });
-    }, 1000);
+  async function handleExtensionSubmit(event) {
+    event.preventDefault();
+    setExtensionError("");
+    if (!canExtend || isBusy || !isValidExtension) {
+      setExtensionError("Enter a positive whole number of seconds.");
+      return;
+    }
 
-    return () => clearInterval(interval);
-  }, [isRunning]);
-
-  const formatTime = (value) => {
-    const minutes = Math.floor(value / 60);
-    const remainingSeconds = value % 60;
-
-    return `${String(minutes).padStart(2, "0")}:${String(
-      remainingSeconds
-    ).padStart(2, "0")}`;
-  };
-
-  const handleStartPause = () => {
-    if (seconds === 0) return;
-    setIsRunning((previous) => !previous);
-  };
-
-  const handleReset = () => {
-    setIsRunning(false);
-    setSeconds(duration);
-  };
-
-  const isWarning = seconds <= 30 && seconds > 0;
-  const isFinished = seconds === 0;
+    const response = await onExtend?.(
+      extensionValue,
+      extensionReason.trim() || undefined,
+    );
+    if (response) {
+      setExtensionSeconds("");
+      setExtensionReason("");
+    }
+  }
 
   return (
-    <section className="timer-panel">
+    <section className="timer-panel" aria-busy={isStarting || isExtending}>
       <div className="timer-header">
         <div>
           <p className="timer-eyebrow">COMPETITION TIMER</p>
-          <h2>Level {level} Timer</h2>
+          <h2>{levelNumber ? `Level ${levelNumber} Timer` : "Round Timer"}</h2>
         </div>
 
         <div className="timer-icon">
@@ -78,17 +120,19 @@ export default function TimerPanel({ level = 1 }) {
         } ${isFinished ? "timer-finished" : ""}`}
       >
         <span className="timer-time">
-          {formatTime(seconds)}
+          {canDisplayCountdown ? formatTime(countdownSeconds) : "--:--"}
         </span>
 
         <span className="timer-status">
           {isFinished
             ? "TIME COMPLETED"
-            : isRunning
-            ? "TIMER RUNNING"
-            : seconds === duration
-            ? "READY TO START"
-            : "TIMER PAUSED"}
+            : isAwaitingBackendExpiration
+              ? "AWAITING BACKEND STATUS"
+              : canDisplayCountdown
+                ? "TIME REMAINING"
+                : roundStatus === "ready"
+                  ? "READY TO START"
+                  : "TIMER UNAVAILABLE"}
         </span>
       </div>
 
@@ -106,28 +150,90 @@ export default function TimerPanel({ level = 1 }) {
         </div>
       )}
 
+      {isAwaitingBackendExpiration && (
+        <div className="timer-message">
+          <AlertCircle size={16} />
+          The display countdown reached zero; waiting for backend round status.
+        </div>
+      )}
+
       <div className="timer-controls">
         <button
+          type="button"
           className="timer-primary-button"
-          onClick={handleStartPause}
-          disabled={isFinished}
+          disabled={!canStart || isBusy}
+          onClick={onStart}
         >
-          {isRunning ? <Pause size={17} /> : <Play size={17} />}
-          {isRunning ? "Pause" : "Start"}
+          <Play size={17} />
+          {isStarting ? "Starting…" : "Start"}
         </button>
 
         <button
+          type="button"
           className="timer-reset-button"
-          onClick={handleReset}
+          disabled
+          aria-disabled="true"
+          title="Reset is not a supported backend operation"
         >
           <RotateCcw size={16} />
           Reset
         </button>
       </div>
 
+      {canExtend && (
+        <form
+          className="vol-toolbar timer-extension-form"
+          onSubmit={handleExtensionSubmit}
+        >
+          <div className="vol-search">
+            <input
+              id="timer-extension-seconds"
+              name="extensionSeconds"
+              type="number"
+              min="1"
+              step="1"
+              placeholder="Extension seconds"
+              aria-label="Timer extension in seconds"
+              value={extensionSeconds}
+              onChange={(event) => {
+                setExtensionSeconds(event.target.value);
+                setExtensionError("");
+              }}
+              disabled={isBusy}
+              required
+            />
+          </div>
+          <div className="vol-search">
+            <input
+              id="timer-extension-reason"
+              name="reason"
+              type="text"
+              placeholder="Reason (optional)"
+              aria-label="Timer extension reason (optional)"
+              value={extensionReason}
+              onChange={(event) => setExtensionReason(event.target.value)}
+              disabled={isBusy}
+            />
+          </div>
+          {extensionError && (
+            <p className="form-error" role="alert">
+              {extensionError}
+            </p>
+          )}
+          <button
+            type="submit"
+            className="vol-filter"
+            disabled={!isValidExtension || isBusy}
+          >
+            <Plus size={16} />
+            {isExtending ? "Extending…" : "Extend time"}
+          </button>
+        </form>
+      )}
+
       <div className="timer-duration-note">
-        <span>Level {level}</span>
-        <span>{duration / 60} minutes allotted</span>
+        <span>{levelNumber ? `Level ${levelNumber}` : "Round"}</span>
+        <span>Deadline: {formatDeadline(deadline)}</span>
       </div>
     </section>
   );

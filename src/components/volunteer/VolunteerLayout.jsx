@@ -9,6 +9,7 @@ import { Brand } from "../ui";
 import {
   clearVolunteerSession,
   getVolunteerSession,
+  storeVolunteerSession,
   validateVolunteerSession,
 } from "../../services/volunteerAuthService";
 import "./volunteer-layout.css";
@@ -29,8 +30,10 @@ export default function VolunteerLayout() {
     setChecking(true);
     setValidationError("");
     try {
-      await validateVolunteerSession(storedSession.token);
-      setSession(storedSession);
+      const volunteer = await validateVolunteerSession(storedSession.token);
+      const refreshedSession = { ...storedSession, volunteer };
+      storeVolunteerSession(refreshedSession);
+      setSession(refreshedSession);
     } catch (error) {
       if (error.code === "SESSION_EXPIRED") {
         clearVolunteerSession();

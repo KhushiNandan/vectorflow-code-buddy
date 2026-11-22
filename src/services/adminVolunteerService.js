@@ -8,10 +8,22 @@ function getApiUrl(path) {
   return `${backendConfig.apiBaseUrl}${path}`;
 }
 
+export class AdminVolunteerApiError extends Error {
+  constructor(message, { status = null, code = null, kind = "api" } = {}) {
+    super(message);
+    this.name = "AdminVolunteerApiError";
+    this.status = status;
+    this.code = code;
+    this.kind = kind;
+  }
+}
+
 async function adminRequest(path, options = {}) {
   const session = getAdminSession();
   if (!session?.token) {
-    throw new Error("Your admin session is missing. Please sign in again.");
+    throw new AdminVolunteerApiError("Your admin session is missing. Please sign in again.", {
+      kind: "session",
+    });
   }
 
   let response;
@@ -25,48 +37,88 @@ async function adminRequest(path, options = {}) {
       },
     });
   } catch {
-    throw new Error("Could not reach the server. Check that it is running and try again.");
+    throw new AdminVolunteerApiError("Could not reach the server. Check your connection and try again.", {
+      kind: "network",
+    });
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // Non-JSON error responses are handled using their HTTP status below.
   }
 
   if (response.status === 401 || response.status === 403) {
-    throw new Error("Your admin session is no longer authorized. Please sign in again.");
+    throw new AdminVolunteerApiError(
+      payload?.message || "Your admin session is no longer authorized. Please sign in again.",
+      { status: response.status, code: payload?.code || null, kind: "authorization" },
+    );
   }
-  if (!response.ok) {
-    throw new Error(`The volunteer request failed (HTTP ${response.status}). Please try again.`);
+  if (!response.ok || payload?.success !== true) {
+    throw new AdminVolunteerApiError(
+      payload?.message || `The volunteer request failed (HTTP ${response.status}). Please try again.`,
+      { status: response.status, code: payload?.code || null },
+    );
   }
-  if (response.status === 204) return null;
+  return payload;
+}
 
-  try {
-    return await response.json();
-  } catch {
-    return null;
+function validateVolunteer(payload, context = "volunteer response") {
+  if (!payload?.volunteer || typeof payload.volunteer !== "object" || Array.isArray(payload.volunteer)) {
+    throw new AdminVolunteerApiError(`The ${context} is missing valid volunteer data.`, {
+      kind: "response",
+    });
   }
+  return payload;
 }
 
 export async function getAdminVolunteers() {
   const result = await adminRequest("/api/admin/volunteers");
-  if (!result || typeof result !== "object" || Array.isArray(result)) {
-    throw new Error("The volunteer list response has an unexpected format.");
-  }
-  if (result.success !== true) {
-    throw new Error("The server reported that loading volunteers was unsuccessful.");
-  }
   if (!Array.isArray(result.volunteers)) {
-    throw new Error("The volunteer list response is missing a valid volunteers array.");
+    throw new AdminVolunteerApiError("The volunteer list response is missing a valid volunteers array.", {
+      kind: "response",
+    });
   }
   return result.volunteers;
 }
 
-export function createAdminVolunteer({ name, username, password, assignedLab }) {
-  return adminRequest("/api/admin/volunteers", {
+export async function createAdminVolunteer({ name, username, password, assignedLab }) {
+  const payload = await adminRequest("/api/admin/volunteers", {
     method: "POST",
-    body: JSON.stringify({ name, username, password, assignedLab }),
+    body: JSON.stringify({ name, username, password, ...(assignedLab ? { assignedLab } : {}) }),
   });
+  return validateVolunteer(payload, "create response");
 }
 
-export function setAdminVolunteerActive(id, isActive) {
+export async function getAdminVolunteerDetails(id) {
+  const payload = await adminRequest(`/api/admin/volunteers/${encodeURIComponent(id)}`);
+  return validateVolunteer(payload, "details response");
+}
+
+export async function updateAdminVolunteer(id, fields) {
+  const body = {};
+  if (fields.name !== undefined) body.name = fields.name;
+  if (fields.assignedLab !== undefined) body.assignedLab = fields.assignedLab;
+  const payload = await adminRequest(`/api/admin/volunteers/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  return validateVolunteer(payload, "update response");
+}
+
+export async function resetAdminVolunteerPassword(id, password) {
+  const payload = await adminRequest(
+    `/api/admin/volunteers/${encodeURIComponent(id)}/reset-password`,
+    { method: "PATCH", body: JSON.stringify({ newPassword: password }) },
+  );
+  return validateVolunteer(payload, "password reset response");
+}
+
+export async function setAdminVolunteerActive(id, isActive) {
   const action = isActive ? "reactivate" : "deactivate";
-  return adminRequest(`/api/admin/volunteers/${encodeURIComponent(id)}/${action}`, {
+  const payload = await adminRequest(`/api/admin/volunteers/${encodeURIComponent(id)}/${action}`, {
     method: "PATCH",
   });
+  return validateVolunteer(payload, `${action} response`);
 }

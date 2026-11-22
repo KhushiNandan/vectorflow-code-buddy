@@ -13,13 +13,40 @@ function getApiUrl(path) {
 }
 
 async function readResponse(response) {
-  let payload = null;
   try {
-    payload = await response.json();
+    return { payload: await response.json(), validJson: true };
   } catch {
-    // Some error responses may not include a JSON body.
+    return { payload: null, validJson: false };
   }
-  return payload;
+}
+
+function isAdminProfile(value) {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof value.id === "string" && value.id.trim() &&
+    typeof value.name === "string" &&
+    typeof value.username === "string" &&
+    value.role === "ADMIN" &&
+    typeof value.isActive === "boolean",
+  );
+}
+
+function safeBackendMessage(payload, fallback) {
+  if (payload?.success !== false) return fallback;
+  const message = payload?.message;
+  if (typeof message !== "string" || !message.trim()) return fallback;
+
+  const normalized = message.trim();
+  if (/\bat\s+\S+\s*\(/i.test(normalized) || /\n\s*at\s+/i.test(normalized)) {
+    return fallback;
+  }
+  return normalized.slice(0, 500);
+}
+
+function authError(message, code, status) {
+  return Object.assign(new Error(message), { code, status });
 }
 
 export function getAdminSession() {
@@ -56,15 +83,32 @@ export async function loginAdmin(username, password) {
     );
   }
 
-  const payload = await readResponse(response);
+  const { payload, validJson } = await readResponse(response);
   if (!response.ok || payload?.success !== true || !payload?.token || !payload?.admin) {
-    if (response.status === 401 || response.status === 400 || response.status === 403) {
-      throw Object.assign(new Error("Invalid username or password."), { code: "INVALID_CREDENTIALS" });
+    const backendCode = typeof payload?.code === "string" ? payload.code : "";
+    const knownLoginErrors = {
+      MISSING_CREDENTIALS: "Please enter your username and password.",
+      INVALID_CREDENTIALS: "Invalid username or password.",
+      ACCOUNT_DEACTIVATED: "This admin account is deactivated. Contact the competition administrator.",
+    };
+    if (knownLoginErrors[backendCode]) {
+      throw authError(
+        safeBackendMessage(payload, knownLoginErrors[backendCode]),
+        backendCode,
+        response.status,
+      );
     }
-    throw Object.assign(
-      new Error("The admin server could not complete the login. Please try again."),
-      { code: "SERVER_ERROR", status: response.status },
+    const fallback = !validJson || !response.ok
+      ? "The admin server could not complete the login. Please try again."
+      : "The admin server returned an invalid login response.";
+    throw authError(
+      safeBackendMessage(payload, fallback),
+      backendCode || (response.ok ? "INVALID_RESPONSE" : "LOGIN_FAILED"),
+      response.status,
     );
+  }
+  if (!isAdminProfile(payload.admin) || typeof payload.token !== "string" || !payload.token.trim()) {
+    throw authError("The admin server returned an invalid login response.", "INVALID_RESPONSE", response.status);
   }
 
   const session = { token: payload.token, admin: payload.admin };
@@ -83,10 +127,28 @@ export async function validateAdminSession(token) {
     throw Object.assign(new Error("Could not reach the admin server."), { code: "NETWORK_ERROR" });
   }
 
-  if (response.status === 401 || response.status === 403) {
-    throw Object.assign(new Error("Your admin session has expired. Please sign in again."), { code: "SESSION_EXPIRED" });
-  }
+  const { payload, validJson } = await readResponse(response);
   if (!response.ok) {
-    throw Object.assign(new Error("The admin session could not be validated."), { code: "SERVER_ERROR", status: response.status });
+    const backendCode = typeof payload?.code === "string" ? payload.code : "";
+    const message = safeBackendMessage(
+      payload,
+      response.status === 401 || response.status === 403
+        ? "Your admin session is invalid or has expired. Please sign in again."
+        : "The admin session could not be validated. Please retry.",
+    );
+    if (response.status >= 500) {
+      throw authError(message, backendCode || "SERVER_ERROR", response.status);
+    }
+    throw authError(message, "SESSION_EXPIRED", response.status);
   }
+
+  if (!validJson || payload?.success !== true || !isAdminProfile(payload?.admin)) {
+    throw authError(
+      safeBackendMessage(payload, "The admin session response was invalid. Please sign in again."),
+      "SESSION_EXPIRED",
+      response.status,
+    );
+  }
+
+  return payload.admin;
 }

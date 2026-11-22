@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Settings2,
   Users,
@@ -13,23 +13,58 @@ import {
   Layers3,
 } from "lucide-react";
 import "./levels.css";
-
-const initialLevels = [
-  { id: 1, name: "Level 1", entryFee: "", passReward: "", duration: 3, easy: 0, hard: 0, reached: 50, cleared: 42, status: "ACTIVE" },
-  { id: 2, name: "Level 2", entryFee: "", passReward: "", duration: 3, easy: 0, hard: 0, reached: 42, cleared: 35, status: "ACTIVE" },
-  { id: 3, name: "Level 3", entryFee: "", passReward: "", duration: 3, easy: 0, hard: 0, reached: 35, cleared: 25, status: "ACTIVE" },
-  { id: 4, name: "Level 4", entryFee: "", passReward: "", duration: 5, easy: 0, hard: 0, reached: 25, cleared: 17, status: "ACTIVE" },
-  { id: 5, name: "Level 5", entryFee: "", passReward: "", duration: 5, easy: 0, hard: 0, reached: 17, cleared: 10, status: "ACTIVE" },
-  { id: 6, name: "Level 6", entryFee: "", passReward: "", duration: 5, easy: 0, hard: 0, reached: 10, cleared: 6, status: "ACTIVE" },
-];
+import { getAdminDashboardStats } from "../../services/adminDataService";
+import { getAdminQuestionList } from "../../services/adminQuestionService";
+import { getAdminLevels, setAdminLevelActive, updateAdminLevel } from "../../services/adminLevelService";
 
 export default function LevelManagement() {
-  const [levels, setLevels] = useState(initialLevels);
+  const [levels, setLevels] = useState([]);
   const [editingLevel, setEditingLevel] = useState(null);
   const [savedMessage, setSavedMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  const totalReached = levels[0].reached;
-  const totalCleared = levels[5].cleared;
+  const loadLevels = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [configuredLevels, dashboard, questions] = await Promise.all([
+        getAdminLevels(),
+        getAdminDashboardStats(),
+        getAdminQuestionList(),
+      ]);
+      setLevels(configuredLevels.map((level) => {
+        const progress = dashboard.levels?.[`L${level.number}`] || {};
+        const levelQuestions = questions.filter((question) => question.levelNumber === level.number && question.isActive);
+        return {
+          id: level.number,
+          name: level.name,
+          entryFee: level.entryRiskAmount ?? "",
+          passReward: level.winningPayout,
+          duration: (level.durationSeconds || 0) / 60,
+          easy: levelQuestions.filter((question) => question.difficulty === "EASY").length,
+          hard: levelQuestions.filter((question) => question.difficulty === "HARD").length,
+          reached: progress.reachedCount ?? 0,
+          cleared: progress.clearedCount ?? 0,
+          status: level.isActive ? "ACTIVE" : "INACTIVE",
+          isUsedInCompetition: level.isUsedInCompetition === true,
+          hasOpenRounds: level.hasOpenRounds === true,
+        };
+      }));
+    } catch (loadError) {
+      setError(loadError.message || "Could not load level configuration.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLevels();
+  }, [loadLevels]);
+
+  const totalReached = levels.find((level) => level.id === 1)?.reached ?? 0;
+  const totalCleared = levels.find((level) => level.id === 6)?.cleared ?? 0;
 
   const updateField = (field, value) => {
     setEditingLevel((current) => ({
@@ -38,31 +73,36 @@ export default function LevelManagement() {
     }));
   };
 
-  const saveLevel = (event) => {
+  const saveLevel = async (event) => {
     event.preventDefault();
-
-    setLevels((current) =>
-      current.map((level) =>
-        level.id === editingLevel.id ? editingLevel : level
-      )
-    );
-
-    setEditingLevel(null);
-    setSavedMessage("Level configuration updated in this demo.");
-    window.setTimeout(() => setSavedMessage(""), 3000);
+    setSaving(true);
+    setError("");
+    const updates = {
+      winningPayout: Number(editingLevel.passReward),
+      durationSeconds: Number(editingLevel.duration) * 60,
+    };
+    if (editingLevel.entryFee !== "") updates.entryRiskAmount = Number(editingLevel.entryFee);
+    try {
+      await updateAdminLevel(editingLevel.id, updates);
+      setEditingLevel(null);
+      setSavedMessage("Level configuration updated.");
+      await loadLevels();
+      window.setTimeout(() => setSavedMessage(""), 3000);
+    } catch (saveError) {
+      setError(saveError.message || "Could not update level configuration.");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const toggleStatus = (id) => {
-    setLevels((current) =>
-      current.map((level) =>
-        level.id === id
-          ? {
-              ...level,
-              status: level.status === "ACTIVE" ? "INACTIVE" : "ACTIVE",
-            }
-          : level
-      )
-    );
+  const toggleStatus = async (level) => {
+    setError("");
+    try {
+      await setAdminLevelActive(level.id, level.status !== "ACTIVE");
+      await loadLevels();
+    } catch (toggleError) {
+      setError(toggleError.message || "Could not update level status.");
+    }
   };
 
   return (
@@ -87,10 +127,8 @@ export default function LevelManagement() {
         </div>
       )}
 
-      <div className="levels-demo-note">
-        <AlertCircle size={17} />
-        Demo configuration. Changes are temporary and are not saved to the backend yet.
-      </div>
+      {error && <div className="levels-demo-note" role="alert"><AlertCircle size={17} />{error} <button type="button" onClick={loadLevels}>Retry</button></div>}
+      {loading && <div className="levels-demo-note" role="status">Loading level configuration…</div>}
 
       {/* Overview */}
       <section className="levels-overview">
@@ -102,17 +140,17 @@ export default function LevelManagement() {
         <OverviewCard
           icon={<Users />}
           label="Initial Participants"
-          value={totalReached}
+          value={loading ? "—" : totalReached}
         />
         <OverviewCard
           icon={<Trophy />}
           label="Reached Final Level"
-          value={levels[5].reached}
+          value={loading ? "—" : levels.find((level) => level.id === 6)?.reached ?? 0}
         />
         <OverviewCard
           icon={<CheckCircle2 />}
           label="Completed Competition"
-          value={totalCleared}
+          value={loading ? "—" : totalCleared}
         />
       </section>
 
@@ -176,7 +214,7 @@ export default function LevelManagement() {
                   </div>
 
                   <div className="level-progress-track">
-                    <div style={{ width: `${percentage}%` }} />
+                    <div style={{ width: `${Math.min(100, percentage)}%` }} />
                   </div>
 
                   <div className="level-progress-counts">
@@ -196,7 +234,7 @@ export default function LevelManagement() {
 
                   <button
                     className="level-toggle-btn"
-                    onClick={() => toggleStatus(level.id)}
+                    onClick={() => toggleStatus(level)}
                     title={level.status === "ACTIVE" ? "Deactivate level" : "Activate level"}
                   >
                     {level.status === "ACTIVE" ? "Deactivate" : "Activate"}
@@ -343,6 +381,7 @@ export default function LevelManagement() {
                     type="number"
                     min="1"
                     max="60"
+                    step="any"
                     required
                     value={editingLevel.duration}
                     onChange={(e) => updateField("duration", Number(e.target.value))}
@@ -355,7 +394,7 @@ export default function LevelManagement() {
                     type="number"
                     min="0"
                     value={editingLevel.easy}
-                    onChange={(e) => updateField("easy", Number(e.target.value))}
+                    readOnly
                   />
                 </label>
 
@@ -365,13 +404,13 @@ export default function LevelManagement() {
                     type="number"
                     min="0"
                     value={editingLevel.hard}
-                    onChange={(e) => updateField("hard", Number(e.target.value))}
+                    readOnly
                   />
                 </label>
               </div>
 
               <div className="level-form-note">
-                These settings are local demo values. Actual question allocation, prize updates and timer control will be handled by the backend.
+                Question counts are derived from active questions. Entry amount, payout and timer settings are saved using the backend level configuration.
               </div>
 
               <div className="level-modal-actions">
@@ -383,9 +422,9 @@ export default function LevelManagement() {
                   Cancel
                 </button>
 
-                <button type="submit" className="level-save-btn">
+                <button type="submit" className="level-save-btn" disabled={saving}>
                   <Save size={16} />
-                  Save changes
+                  {saving ? "Saving…" : "Save changes"}
                 </button>
               </div>
             </form>

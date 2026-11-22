@@ -2,6 +2,35 @@ import { backendConfig } from "./backendConfig";
 
 const SESSION_KEY = "code-buddy-volunteer-session";
 
+function isVolunteerProfile(value) {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof value.id === "string" && value.id.trim() &&
+    typeof value.name === "string" &&
+    typeof value.username === "string" &&
+    value.role === "VOLUNTEER" &&
+    typeof value.isActive === "boolean",
+  );
+}
+
+function safeBackendMessage(payload, fallback) {
+  if (payload?.success !== false) return fallback;
+  const message = payload?.message;
+  if (typeof message !== "string" || !message.trim()) return fallback;
+
+  const normalized = message.trim();
+  if (/\bat\s+\S+\s*\(/i.test(normalized) || /\n\s*at\s+/i.test(normalized)) {
+    return fallback;
+  }
+  return normalized.slice(0, 500);
+}
+
+function authError(message, code, status) {
+  return Object.assign(new Error(message), { code, status });
+}
+
 function getApiUrl(path) {
   if (!backendConfig.apiBaseUrl) {
     throw Object.assign(
@@ -85,10 +114,34 @@ export async function validateVolunteerSession(token) {
     throw Object.assign(new Error("Could not reach the volunteer server."), { code: "NETWORK_ERROR" });
   }
 
-  if (response.status === 401 || response.status === 403) {
-    throw Object.assign(new Error("Your volunteer session is no longer valid. Please sign in again."), { code: "SESSION_EXPIRED" });
+  let payload = null;
+  let validJson = false;
+  try {
+    payload = await response.json();
+    validJson = true;
+  } catch {
+    // Treat malformed session responses as invalid; callers will return to login.
   }
+
   if (!response.ok) {
-    throw Object.assign(new Error("The volunteer session could not be validated."), { code: "SERVER_ERROR", status: response.status });
+    const backendCode = typeof payload?.code === "string" ? payload.code : "";
+    const fallback = response.status === 401 || response.status === 403
+      ? "Your volunteer session is no longer valid. Please sign in again."
+      : "The volunteer session could not be validated. Please retry.";
+    const message = safeBackendMessage(payload, fallback);
+    if (response.status >= 500) {
+      throw authError(message, backendCode || "SERVER_ERROR", response.status);
+    }
+    throw authError(message, "SESSION_EXPIRED", response.status);
   }
+
+  if (!validJson || payload?.success !== true || !isVolunteerProfile(payload?.volunteer)) {
+    throw authError(
+      safeBackendMessage(payload, "The volunteer session response was invalid. Please sign in again."),
+      "SESSION_EXPIRED",
+      response.status,
+    );
+  }
+
+  return payload.volunteer;
 }

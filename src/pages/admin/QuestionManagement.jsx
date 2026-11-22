@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Plus,
   Search,
@@ -8,45 +8,12 @@ import {
   BookOpen,
 } from "lucide-react";
 import "./questions.css";
-
-const initialQuestions = [
-  {
-    id: 1,
-    number: "Q001",
-    title: "Sum of Digits",
-    level: 1,
-    difficulty: "EASY",
-    statement: "Find the sum of all digits of a given integer.",
-    constraints: "1 <= N <= 1000000",
-    sampleInput: "123",
-    sampleOutput: "6",
-    assigned: false,
-  },
-  {
-    id: 2,
-    number: "Q002",
-    title: "Reverse a Number",
-    level: 1,
-    difficulty: "HARD",
-    statement: "Reverse the digits of a given integer.",
-    constraints: "0 <= N <= 100000000",
-    sampleInput: "1234",
-    sampleOutput: "4321",
-    assigned: false,
-  },
-  {
-    id: 3,
-    number: "Q003",
-    title: "Find Maximum Element",
-    level: 2,
-    difficulty: "EASY",
-    statement: "Find the largest element in an array.",
-    constraints: "1 <= N <= 1000",
-    sampleInput: "5\n2 8 1 9 4",
-    sampleOutput: "9",
-    assigned: false,
-  },
-];
+import {
+  createAdminQuestion,
+  getAdminQuestions,
+  setAdminQuestionActive,
+  updateAdminQuestion,
+} from "../../services/adminQuestionService";
 
 const emptyForm = {
   title: "",
@@ -59,12 +26,46 @@ const emptyForm = {
 };
 
 export default function QuestionManagement() {
-  const [questions, setQuestions] = useState(initialQuestions);
+  const [questions, setQuestions] = useState([]);
   const [search, setSearch] = useState("");
   const [difficulty, setDifficulty] = useState("ALL");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [error, setError] = useState("");
+
+  const loadQuestions = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getAdminQuestions();
+      setQuestions(data.map((question) => ({
+        id: question.id,
+        number: question.id,
+        title: question.title,
+        level: question.levelNumber,
+        difficulty: question.difficulty,
+        statement: question.statement,
+        constraints: Array.isArray(question.constraints) ? question.constraints.join("\n") : "",
+        sampleInput: question.examples?.[0]?.input || "",
+        sampleOutput: question.examples?.[0]?.output || "",
+        examples: Array.isArray(question.examples) ? question.examples : [],
+        assigned: question.isAssigned === true,
+        isActive: question.isActive === true,
+      })));
+    } catch (loadError) {
+      setError(loadError.message || "Could not load questions.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadQuestions();
+  }, [loadQuestions]);
 
   const filteredQuestions = questions.filter((question) => {
     const matchesSearch =
@@ -108,52 +109,54 @@ export default function QuestionManagement() {
 
   const handleSave = (event) => {
     event.preventDefault();
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    const constraints = form.constraints.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    const firstExample = { input: form.sampleInput, output: form.sampleOutput };
+    const payload = {
+      title: form.title.trim(),
+      statement: form.statement.trim(),
+      levelNumber: Number(form.level),
+      difficulty: form.difficulty,
+      constraints,
+      examples: editingId === null
+        ? [firstExample]
+        : [
+            { ...(questions.find((question) => question.id === editingId)?.examples?.[0] || {}), ...firstExample },
+            ...(questions.find((question) => question.id === editingId)?.examples?.slice(1) || []),
+          ],
+    };
 
-    if (editingId !== null) {
-      setQuestions((previous) =>
-        previous.map((question) =>
-          question.id === editingId
-            ? { ...question, ...form, level: Number(form.level) }
-            : question
-        )
-      );
-    } else {
-      const nextNumber =
-        Math.max(
-          0,
-          ...questions.map((question) =>
-            Number(question.number.replace("Q", "")) || 0
-          )
-        ) + 1;
-
-      const newQuestion = {
-        ...form,
-        id: Date.now(),
-        number: `Q${String(nextNumber).padStart(3, "0")}`,
-        level: Number(form.level),
-        assigned: false,
-      };
-
-      setQuestions((previous) => [...previous, newQuestion]);
-    }
-
-    closeForm();
+    const save = async () => {
+      setError("");
+      try {
+        if (editingId !== null) await updateAdminQuestion(editingId, payload);
+        else await createAdminQuestion(payload);
+        closeForm();
+        await loadQuestions();
+      } catch (saveError) {
+        setError(saveError.message || "Could not save the question.");
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    };
+    save();
   };
 
-  const handleDelete = (question) => {
-    if (question.assigned) {
-      alert("This question is assigned and cannot be deleted.");
-      return;
-    }
-
+  const handleDelete = async (question) => {
+    if (question.assigned && question.isActive) return;
     const confirmed = window.confirm(
-      `Are you sure you want to delete "${question.title}"?`
+      `Are you sure you want to ${question.isActive ? "deactivate" : "reactivate"} "${question.title}"?`
     );
-
-    if (confirmed) {
-      setQuestions((previous) =>
-        previous.filter((item) => item.id !== question.id)
-      );
+    if (!confirmed) return;
+    setError("");
+    try {
+      await setAdminQuestionActive(question.id, !question.isActive);
+      await loadQuestions();
+    } catch (updateError) {
+      setError(updateError.message || "Could not update the question status.");
     }
   };
 
@@ -202,6 +205,9 @@ export default function QuestionManagement() {
           </strong>
         </div>
       </div>
+
+      {error && <p role="alert">{error} <button type="button" onClick={loadQuestions}>Retry</button></p>}
+      {loading && <p role="status">Loading questions…</p>}
 
       {/* SEARCH AND FILTER */}
       <div className="question-toolbar">
@@ -274,10 +280,10 @@ export default function QuestionManagement() {
                       className={
                         question.assigned
                           ? "question-status assigned"
-                          : "question-status available"
+                          : question.isActive ? "question-status available" : "question-status inactive"
                       }
                     >
-                      {question.assigned ? "Assigned" : "Available"}
+                      {question.assigned ? "Assigned" : question.isActive ? "Available" : "Inactive"}
                     </span>
                   </td>
 
@@ -285,14 +291,15 @@ export default function QuestionManagement() {
                     <div className="question-actions">
                       <button
                         title="Edit question"
+                        disabled={!question.isActive}
                         onClick={() => openEditForm(question)}
                       >
                         <Pencil size={16} />
                       </button>
 
                       <button
-                        title="Delete question"
-                        disabled={question.assigned}
+                        title={question.isActive ? "Deactivate question" : "Reactivate question"}
+                        disabled={question.assigned && question.isActive}
                         onClick={() => handleDelete(question)}
                       >
                         <Trash2 size={16} />
@@ -302,7 +309,7 @@ export default function QuestionManagement() {
                 </tr>
               ))}
 
-              {filteredQuestions.length === 0 && (
+              {!loading && !error && filteredQuestions.length === 0 && (
                 <tr>
                   <td colSpan="6" className="question-empty">
                     No questions found. Try another search or add a question.
@@ -448,8 +455,9 @@ export default function QuestionManagement() {
                 <button
                   type="submit"
                   className="question-save-btn"
+                  disabled={saving}
                 >
-                  {editingId !== null
+                  {saving ? "Saving…" : editingId !== null
                     ? "Save Changes"
                     : "Add Question"}
                 </button>

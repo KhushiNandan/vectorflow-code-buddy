@@ -18,6 +18,8 @@ import VolunteerDashboard from "./pages/volunteer/VolunteerDashboard";
 import VolunteerLogin from "./pages/volunteer/VolunteerLogin";
 import Reports from "./pages/admin/Reports";
 import LevelManagement from "./pages/admin/LevelManagement";
+import RoundsManagement from "./pages/admin/RoundsManagement";
+import TransactionsManagement from "./pages/admin/TransactionsManagement";
 import AdminLogin from "./pages/admin/AdminLogin";
 import EvaluationWorkspace from "./pages/volunteer/EvaluationWorkspace";
 
@@ -74,7 +76,8 @@ function AppRoutes() {
         <Route path="participants" element={<ParticipantManagement />} />
         <Route path="volunteers" element={<VolunteerManagement />} />
         <Route path="reports" element={<Reports />} />
-     
+        <Route path="rounds" element={<RoundsManagement />} />
+        <Route path="transactions" element={<TransactionsManagement />} />
       </Route>
       <Route path="/volunteer/login" element={<VolunteerLogin />} />
       <Route path="/volunteer" element={<VolunteerLayout />}>
