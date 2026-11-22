@@ -1,5 +1,20 @@
 const mongoose = require('mongoose');
-const { Round, Question, Level, Evaluation } = require('../models');
+const { Round, Question, Level, Evaluation, Student, Transaction } = require('../models');
+
+/**
+ * Format an immutable Transaction ledger record for student consumption.
+ */
+const formatStudentTransactionResponse = (transaction) => ({
+  id: (transaction._id || '').toString(),
+  type: transaction.type,
+  status: transaction.status || 'SUCCESS',
+  amount: transaction.amount,
+  balanceAfter: transaction.balanceAfter,
+  levelNumber: transaction.levelNumber ?? null,
+  roundId: transaction.roundId ? transaction.roundId.toString() : null,
+  description: transaction.description,
+  timestamp: transaction.timestamp,
+});
 
 /**
  * Validate and parse a stored Round deadline into epoch milliseconds.
@@ -500,10 +515,17 @@ const getLevelInfo = async (req, res) => {
       });
     }
 
+    const entryFee =
+      Number.isFinite(levelConfig.entryRiskAmount) && levelConfig.entryRiskAmount >= 0
+        ? levelConfig.entryRiskAmount
+        : 0;
+    const currentBalance = student.walletBalance ?? 0;
+
     return res.status(200).json({
       success: true,
       currentLevel,
-      walletBalance: student.walletBalance ?? 0,
+      walletBalance: currentBalance,
+      hasSufficientBalance: currentBalance >= entryFee,
       level: formatLevelResponse(levelConfig),
     });
   } catch (error) {
@@ -598,22 +620,7 @@ const allocateQuestion = async (req, res) => {
       });
     }
 
-    // 4. Check whether a Round already exists for this student and current level
-    const existingRound = await Round.findOne({
-      studentId: student._id,
-      levelNumber: currentLevel,
-    });
-
-    if (existingRound) {
-      return res.status(200).json({
-        success: true,
-        message: 'Existing round retrieved successfully.',
-        isExisting: true,
-        round: formatRoundStudentResponse(existingRound),
-      });
-    }
-
-    // 5. Verify that corresponding Level is active
+    // 4. Verify that corresponding Level is active and fetch entry fee
     const levelConfig = await Level.findOne({ number: currentLevel, isActive: true });
     if (!levelConfig) {
       return res.status(404).json({
@@ -623,7 +630,52 @@ const allocateQuestion = async (req, res) => {
       });
     }
 
-    // 6. Find all active matching questions for this level and difficulty
+    const entryFee =
+      typeof levelConfig.entryRiskAmount === 'number' &&
+      Number.isFinite(levelConfig.entryRiskAmount) &&
+      levelConfig.entryRiskAmount > 0
+        ? levelConfig.entryRiskAmount
+        : 0;
+
+    // 5. Check whether a Round already exists for this student and current level (Idempotent)
+    const existingRound = await Round.findOne({
+      studentId: student._id,
+      levelNumber: currentLevel,
+    });
+
+    if (existingRound) {
+      const freshStudent = await Student.findById(student._id);
+      const existingDebitTx = await Transaction.findOne({
+        roundId: existingRound._id,
+        type: 'STAKE_DEBIT',
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Existing round retrieved successfully.',
+        isExisting: true,
+        walletBalance: freshStudent ? (freshStudent.walletBalance ?? 0) : (student.walletBalance ?? 0),
+        entryFee: 0,
+        transaction: existingDebitTx ? formatStudentTransactionResponse(existingDebitTx) : null,
+        round: formatRoundStudentResponse(existingRound),
+      });
+    }
+
+    // 6. Check student wallet balance before allowing level entry
+    const freshStudent = await Student.findById(student._id);
+    const currentBalance = freshStudent ? (freshStudent.walletBalance ?? 0) : (student.walletBalance ?? 0);
+
+    if (currentBalance < entryFee) {
+      return res.status(400).json({
+        success: false,
+        code: 'INSUFFICIENT_BALANCE',
+        message: `Insufficient wallet balance to enter Level ${currentLevel}. Required: ${entryFee}, available: ${currentBalance}.`,
+        walletBalance: currentBalance,
+        requiredAmount: entryFee,
+      });
+    }
+
+    // 7. Find all active matching questions for this level and difficulty
     const eligibleQuestions = await Question.find({
       levelNumber: currentLevel,
       difficulty,
@@ -638,7 +690,7 @@ const allocateQuestion = async (req, res) => {
       });
     }
 
-    // 7. Avoid re-allocating questions previously assigned to this student in other rounds if possible
+    // 8. Avoid re-allocating questions previously assigned to this student in other rounds if possible
     const pastRounds = await Round.find({ studentId: student._id }).select('questionId');
     const pastQuestionIds = new Set(pastRounds.map((r) => r.questionId.toString()));
 
@@ -650,7 +702,7 @@ const allocateQuestion = async (req, res) => {
     const randomIndex = Math.floor(Math.random() * selectionPool.length);
     const selectedQuestion = selectionPool[randomIndex];
 
-    // 8. Construct immutable question snapshot (strictly omitting hiddenTestCases)
+    // 9. Construct immutable question snapshot (strictly omitting hiddenTestCases)
     const questionSnapshot = {
       questionId: selectedQuestion._id,
       title: selectedQuestion.title,
@@ -661,42 +713,292 @@ const allocateQuestion = async (req, res) => {
       levelNumber: selectedQuestion.levelNumber,
     };
 
-    // 9. Create Round instance
-    const round = new Round({
-      studentId: student._id,
-      levelNumber: currentLevel,
-      questionId: selectedQuestion._id,
-      questionSnapshot,
-      status: 'ready',
-      durationSeconds: levelConfig.durationSeconds || 180,
-    });
+    // 10. Atomic Execution: Round allocation + conditional wallet deduction + STAKE_DEBIT Transaction
+    let savedRound = null;
+    let savedDebitTx = null;
+    let finalStudent = freshStudent;
+    let session = null;
+    let txCommitted = false;
+    let isRaceExisting = false;
+    let raceExistingDebitTx = null;
 
-    // 10. Save round with atomic concurrency protection against E11000 duplicate keys
-    let savedRound;
     try {
-      savedRound = await round.save();
-    } catch (saveError) {
-      if (saveError.code === 11000 || (saveError.message && saveError.message.includes('E11000'))) {
-        const raceExistingRound = await Round.findOne({
-          studentId: student._id,
-          levelNumber: currentLevel,
+      session = await mongoose.startSession();
+    } catch (_) {
+      session = null;
+    }
+
+    if (session) {
+      try {
+        await session.withTransaction(async () => {
+          // Re-check for concurrent existing round
+          const raceExisting = await Round.findOne({
+            studentId: student._id,
+            levelNumber: currentLevel,
+          }).session(session);
+
+          if (raceExisting) {
+            savedRound = raceExisting;
+            isRaceExisting = true;
+            raceExistingDebitTx = await Transaction.findOne({
+              roundId: raceExisting._id,
+              type: 'STAKE_DEBIT',
+            }).session(session);
+            return;
+          }
+
+          let updatedStudent = freshStudent;
+          if (entryFee > 0) {
+            updatedStudent = await Student.findOneAndUpdate(
+              {
+                _id: student._id,
+                walletBalance: { $gte: entryFee },
+              },
+              {
+                $inc: {
+                  walletBalance: -entryFee,
+                  totalRisked: entryFee,
+                },
+              },
+              {
+                session,
+                new: true,
+                runValidators: true,
+              }
+            );
+
+            if (!updatedStudent) {
+              const insufficientErr = new Error(`Insufficient wallet balance to enter Level ${currentLevel}.`);
+              insufficientErr.isInsufficientBalance = true;
+              throw insufficientErr;
+            }
+          }
+
+          const round = new Round({
+            studentId: student._id,
+            levelNumber: currentLevel,
+            questionId: selectedQuestion._id,
+            questionSnapshot,
+            status: 'ready',
+            durationSeconds: levelConfig.durationSeconds || 180,
+          });
+          savedRound = await round.save({ session });
+
+          if (entryFee > 0) {
+            const debitTx = new Transaction({
+              studentId: student._id,
+              type: 'STAKE_DEBIT',
+              status: 'SUCCESS',
+              amount: entryFee,
+              balanceAfter: updatedStudent.walletBalance,
+              levelNumber: currentLevel,
+              roundId: savedRound._id,
+              settlementKey: `round_entry:${savedRound._id.toString()}`,
+              description: `Level ${currentLevel} entry fee debit (${updatedStudent.walletBalance + entryFee} -> ${updatedStudent.walletBalance})`,
+              timestamp: new Date(),
+            });
+            savedDebitTx = await debitTx.save({ session });
+          }
+          finalStudent = updatedStudent;
         });
-        if (raceExistingRound) {
-          return res.status(200).json({
-            success: true,
-            message: 'Existing round retrieved successfully.',
-            isExisting: true,
-            round: formatRoundStudentResponse(raceExistingRound),
+        txCommitted = true;
+      } catch (txErr) {
+        if (txErr.isInsufficientBalance) {
+          return res.status(400).json({
+            success: false,
+            code: 'INSUFFICIENT_BALANCE',
+            message: `Insufficient wallet balance to enter Level ${currentLevel}. Required: ${entryFee}, available: ${currentBalance}.`,
+            walletBalance: currentBalance,
+            requiredAmount: entryFee,
           });
         }
+        if (txErr.code === 11000 || (txErr.message && txErr.message.includes('E11000'))) {
+          const raceExistingRound = await Round.findOne({
+            studentId: student._id,
+            levelNumber: currentLevel,
+          });
+          if (raceExistingRound) {
+            const currentStudent = await Student.findById(student._id);
+            const existingTx = await Transaction.findOne({
+              roundId: raceExistingRound._id,
+              type: 'STAKE_DEBIT',
+            });
+            return res.status(200).json({
+              success: true,
+              message: 'Existing round retrieved successfully.',
+              isExisting: true,
+              walletBalance: currentStudent ? (currentStudent.walletBalance ?? 0) : (student.walletBalance ?? 0),
+              entryFee: 0,
+              transaction: existingTx ? formatStudentTransactionResponse(existingTx) : null,
+              round: formatRoundStudentResponse(raceExistingRound),
+            });
+          }
+        }
+        const isTxUnsupported =
+          txErr.message &&
+          (txErr.message.includes('Transaction numbers are only allowed') ||
+            txErr.message.includes('replica set') ||
+            txErr.message.includes('does not support retryable writes or transactions'));
+        if (!isTxUnsupported) {
+          throw txErr;
+        }
+      } finally {
+        await session.endSession();
       }
-      throw saveError;
+
+      if (isRaceExisting && savedRound) {
+        const currentStudent = await Student.findById(student._id);
+        return res.status(200).json({
+          success: true,
+          message: 'Existing round retrieved successfully.',
+          isExisting: true,
+          walletBalance: currentStudent ? (currentStudent.walletBalance ?? 0) : (student.walletBalance ?? 0),
+          entryFee: 0,
+          transaction: raceExistingDebitTx ? formatStudentTransactionResponse(raceExistingDebitTx) : null,
+          round: formatRoundStudentResponse(savedRound),
+        });
+      }
+    }
+
+    // Standalone fallback (when session or withTransaction is unavailable or unsupported)
+    if (!txCommitted) {
+      // Re-check for concurrent existing round
+      const raceExisting = await Round.findOne({
+        studentId: student._id,
+        levelNumber: currentLevel,
+      });
+      if (raceExisting) {
+        const currentStudent = await Student.findById(student._id);
+        const existingTx = await Transaction.findOne({
+          roundId: raceExisting._id,
+          type: 'STAKE_DEBIT',
+        });
+        return res.status(200).json({
+          success: true,
+          message: 'Existing round retrieved successfully.',
+          isExisting: true,
+          walletBalance: currentStudent ? (currentStudent.walletBalance ?? 0) : (student.walletBalance ?? 0),
+          entryFee: 0,
+          transaction: existingTx ? formatStudentTransactionResponse(existingTx) : null,
+          round: formatRoundStudentResponse(raceExisting),
+        });
+      }
+
+      let updatedStudent = freshStudent;
+      let didDeduct = false;
+
+      if (entryFee > 0) {
+        updatedStudent = await Student.findOneAndUpdate(
+          {
+            _id: student._id,
+            walletBalance: { $gte: entryFee },
+          },
+          {
+            $inc: {
+              walletBalance: -entryFee,
+              totalRisked: entryFee,
+            },
+          },
+          {
+            new: true,
+            runValidators: true,
+          }
+        );
+
+        if (!updatedStudent) {
+          return res.status(400).json({
+            success: false,
+            code: 'INSUFFICIENT_BALANCE',
+            message: `Insufficient wallet balance to enter Level ${currentLevel}. Required: ${entryFee}, available: ${currentBalance}.`,
+            walletBalance: currentBalance,
+            requiredAmount: entryFee,
+          });
+        }
+        didDeduct = true;
+      }
+
+      try {
+        const round = new Round({
+          studentId: student._id,
+          levelNumber: currentLevel,
+          questionId: selectedQuestion._id,
+          questionSnapshot,
+          status: 'ready',
+          durationSeconds: levelConfig.durationSeconds || 180,
+        });
+        savedRound = await round.save();
+      } catch (saveError) {
+        // Compensating refund on round creation failure
+        if (didDeduct) {
+          await Student.findByIdAndUpdate(student._id, {
+            $inc: {
+              walletBalance: entryFee,
+              totalRisked: -entryFee,
+            },
+          });
+        }
+        if (saveError.code === 11000 || (saveError.message && saveError.message.includes('E11000'))) {
+          const raceExistingRound = await Round.findOne({
+            studentId: student._id,
+            levelNumber: currentLevel,
+          });
+          if (raceExistingRound) {
+            const currentStudent = await Student.findById(student._id);
+            const existingTx = await Transaction.findOne({
+              roundId: raceExistingRound._id,
+              type: 'STAKE_DEBIT',
+            });
+            return res.status(200).json({
+              success: true,
+              message: 'Existing round retrieved successfully.',
+              isExisting: true,
+              walletBalance: currentStudent ? (currentStudent.walletBalance ?? 0) : (student.walletBalance ?? 0),
+              entryFee: 0,
+              transaction: existingTx ? formatStudentTransactionResponse(existingTx) : null,
+              round: formatRoundStudentResponse(raceExistingRound),
+            });
+          }
+        }
+        throw saveError;
+      }
+
+      if (entryFee > 0) {
+        try {
+          const debitTx = new Transaction({
+            studentId: student._id,
+            type: 'STAKE_DEBIT',
+            status: 'SUCCESS',
+            amount: entryFee,
+            balanceAfter: updatedStudent.walletBalance,
+            levelNumber: currentLevel,
+            roundId: savedRound._id,
+            settlementKey: `round_entry:${savedRound._id.toString()}`,
+            description: `Level ${currentLevel} entry fee debit (${updatedStudent.walletBalance + entryFee} -> ${updatedStudent.walletBalance})`,
+            timestamp: new Date(),
+          });
+          savedDebitTx = await debitTx.save();
+        } catch (txSaveErr) {
+          // Compensating rollback if transaction save fails
+          await Round.findByIdAndDelete(savedRound._id);
+          await Student.findByIdAndUpdate(student._id, {
+            $inc: {
+              walletBalance: entryFee,
+              totalRisked: -entryFee,
+            },
+          });
+          throw txSaveErr;
+        }
+      }
+      finalStudent = updatedStudent;
     }
 
     return res.status(201).json({
       success: true,
       message: 'Question allocated successfully.',
       isExisting: false,
+      walletBalance: finalStudent ? (finalStudent.walletBalance ?? 0) : 0,
+      entryFee,
+      transaction: savedDebitTx ? formatStudentTransactionResponse(savedDebitTx) : null,
       round: formatRoundStudentResponse(savedRound),
     });
   } catch (error) {
@@ -819,6 +1121,7 @@ module.exports = {
   getActiveRoundStatus,
   formatLevelResponse,
   formatRoundStudentResponse,
+  formatStudentTransactionResponse,
   syncRoundDeadlineState,
   computeTimerFields,
   parseValidDeadlineMs,

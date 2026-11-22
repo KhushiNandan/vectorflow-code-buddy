@@ -458,6 +458,7 @@ const formatAdminRoundResponse = (round, participant = null, evaluation = null) 
 const formatAdminTransactionResponse = (transaction, participant = null) => ({
   id: transaction._id ? transaction._id.toString() : '',
   type: transaction.type,
+  status: transaction.status || 'SUCCESS',
   amount: transaction.amount,
   balanceAfter: transaction.balanceAfter,
   levelNumber: transaction.levelNumber ?? null,
