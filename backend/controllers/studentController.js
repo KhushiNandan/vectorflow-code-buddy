@@ -91,6 +91,7 @@ const buildPaginationMeta = (page, limit, totalItems) => {
 const formatStudentTransactionResponse = (transaction) => ({
   id: (transaction._id || '').toString(),
   type: transaction.type,
+  status: transaction.status || 'SUCCESS',
   amount: transaction.amount,
   balanceAfter: transaction.balanceAfter,
   levelNumber: transaction.levelNumber ?? null,
@@ -297,6 +298,7 @@ module.exports = {
   getStudentTransactions,
   getStudentRoundHistory,
   getCompetitionConfig,
+  formatStudentTransactionResponse,
   parsePaginationQuery,
   buildPaginationMeta,
 };

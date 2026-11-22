@@ -19,6 +19,16 @@ const transactionSchema = new mongoose.Schema(
       required: [true, 'Transaction type is required'],
       index: true,
     },
+    // Transaction execution status
+    status: {
+      type: String,
+      enum: {
+        values: ['SUCCESS', 'PENDING', 'FAILED'],
+        message: '{VALUE} is not a valid transaction status',
+      },
+      default: 'SUCCESS',
+      index: true,
+    },
     // Transaction amount (non-negative magnitude of balance change)
     amount: {
       type: Number,

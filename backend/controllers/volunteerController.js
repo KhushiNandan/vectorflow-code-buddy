@@ -978,6 +978,7 @@ const formatTransactionResponse = (transaction) => ({
   id: (transaction._id || '').toString(),
   studentId: (transaction.studentId || '').toString(),
   type: transaction.type,
+  status: transaction.status || 'SUCCESS',
   amount: transaction.amount,
   balanceAfter: transaction.balanceAfter,
   levelNumber: transaction.levelNumber,
@@ -1196,6 +1197,7 @@ const applyRoundSettlementInTx = async ({
   const transactionDoc = new Transaction({
     studentId: sessionStudent._id,
     type: transactionType,
+    status: 'SUCCESS',
     amount: transactionAmount,
     balanceAfter: targetBalance,
     levelNumber: sessionCurrentLevel,
@@ -1716,7 +1718,10 @@ const progressStudentRoundByUsn = async (req, res) => {
 
       // Positive incremental PASS reward only (L1 FAIL safe-zone payout never increments totalEarned)
       const earnedIncrement = isPass ? Math.max(0, deltaAmount) : 0;
-      const riskedIncrement = entryRiskAmount;
+      const hasEntryDebit = Boolean(
+        await Transaction.exists({ roundId: sessionRound._id, type: 'STAKE_DEBIT' }).session(session)
+      );
+      const riskedIncrement = hasEntryDebit ? 0 : entryRiskAmount;
       const nextTotalEarned = prevTotalEarned + earnedIncrement;
       const nextTotalRisked = prevTotalRisked + riskedIncrement;
 
