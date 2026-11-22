@@ -19,15 +19,15 @@ export const backendCompetitionService = {
     const response = requireSuccess(await apiClient.get('/api/competition/config'), 'competition configuration')
     const configuration = normalizeCompetitionConfiguration({
       ...response,
-      currency: 'INR',
-      locale: 'en-IN',
-      supportedLanguages: SUPPORTED_LANGUAGES,
-      questionsPerRound: 1,
+      currency: response.currency ?? 'INR',
+      locale: response.locale ?? 'en-IN',
+      supportedLanguages: response.supportedLanguages ?? SUPPORTED_LANGUAGES,
+      questionsPerRound: response.questionsPerRound ?? 1,
     })
     if (configuration.totalLevels !== 6 || configuration.levels.length !== 6) {
       throw new ApiError('The backend competition configuration does not contain exactly six levels.', API_ERROR_CODES.RESPONSE, { responseBody: response })
     }
-    return { ...configuration, name: 'Code Buddy', source: 'backend' }
+    return { ...configuration, name: response.name ?? 'Code Buddy', source: 'backend' }
   },
 
   async getLevelInfo() {
