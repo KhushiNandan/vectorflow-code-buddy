@@ -5,9 +5,6 @@ const mongoose = require('mongoose');
 const {
   getLevelInfo,
   allocateQuestion,
-  formatLevelResponse,
-  formatRoundStudentResponse,
-  formatStudentTransactionResponse,
 } = require('../controllers/roundController');
 const {
   getStudentTransactions,
@@ -25,7 +22,6 @@ const {
   Evaluation,
   Transaction,
   Staff,
-  Volunteer,
 } = require('../models');
 
 // Test utilities
@@ -152,7 +148,6 @@ async function runWalletWorkflowTests() {
     levels: new Map(),
     evaluations: new Map(),
     transactions: new Map(),
-    volunteers: new Map(),
   };
 
   // Populate canonical levels
@@ -187,7 +182,6 @@ async function runWalletWorkflowTests() {
 
   const origRoundFindOne = Round.findOne;
   const origRoundFind = Round.find;
-  const origRoundFindById = Round.findById;
   const origRoundSave = Round.prototype.save;
 
   const origLevelFindOne = Level.findOne;
@@ -204,9 +198,7 @@ async function runWalletWorkflowTests() {
   const origEvaluationFindOne = Evaluation.findOne;
   const origEvaluationFindOneAndUpdate = Evaluation.findOneAndUpdate;
   const origEvaluationFindByIdAndUpdate = Evaluation.findByIdAndUpdate;
-  const origEvaluationSave = Evaluation.prototype.save;
 
-  const origVolunteerFindOne = Volunteer.findOne;
   const origMongooseStartSession = mongoose.startSession;
 
   // Mock mongoose.startSession to support transactional testing in-memory
@@ -1049,9 +1041,6 @@ async function runWalletWorkflowTests() {
       const progRes = mockRes();
 
       await progressStudentRoundByUsn(progReq, progRes);
-      if (progRes.statusCode !== 200) {
-        console.log('Test 15 progRes:', progRes.statusCode, progRes.body);
-      }
 
       assert.strictEqual(progRes.statusCode, 200);
       assert.strictEqual(progRes.body.success, true);
@@ -1184,7 +1173,6 @@ async function runWalletWorkflowTests() {
 
     Round.findOne = origRoundFindOne;
     Round.find = origRoundFind;
-    Round.findById = origRoundFindById;
     Round.prototype.save = origRoundSave;
 
     Level.findOne = origLevelFindOne;
@@ -1201,9 +1189,7 @@ async function runWalletWorkflowTests() {
     Evaluation.findOne = origEvaluationFindOne;
     Evaluation.findOneAndUpdate = origEvaluationFindOneAndUpdate;
     Evaluation.findByIdAndUpdate = origEvaluationFindByIdAndUpdate;
-    Evaluation.prototype.save = origEvaluationSave;
 
-    Volunteer.findOne = origVolunteerFindOne;
     mongoose.startSession = origMongooseStartSession;
   }
 

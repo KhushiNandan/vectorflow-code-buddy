@@ -54,13 +54,10 @@ function presentError(error) {
 }
 
 export const studentAuthenticationService = {
-  get configured() { return Boolean(backendConfig.apiBaseUrl && backendConfig.googleClientId) },
   get hasRealSession() { return Boolean(accessToken || storedToken()) },
   get hasRealMode() {
     try { return storage()?.getItem(MODE_KEY) === 'real' || window.localStorage?.getItem(MODE_KEY) === 'real' } catch { return Boolean(accessToken) }
   },
-  getAccessToken() { return accessToken || storedToken() },
-  async startDemoMode() { clearToken(); clearMode() },
   async signInWithGoogle(idToken) {
     if (!backendConfig.apiBaseUrl) throw new ApiError('Backend API URL is not configured. Set VITE_API_BASE_URL.', API_ERROR_CODES.CONFIGURATION)
     if (!backendConfig.googleClientId) throw new ApiError('Google sign-in is not configured. Set VITE_GOOGLE_CLIENT_ID.', API_ERROR_CODES.CONFIGURATION)
@@ -112,7 +109,6 @@ export const studentAuthenticationService = {
     }
   },
   async signOut() { clearToken(); clearMode() },
-  async endExpiredSession() { clearToken(); markRealMode() },
   async useDemoMode() { clearToken(); clearMode() },
 }
 

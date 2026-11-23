@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { ArrowRight, Check, CircleHelp, Clock3, Code2, LoaderCircle, ShieldCheck } from 'lucide-react'
+import { ArrowRight, CircleHelp, Clock3, Code2, LoaderCircle, ShieldCheck } from 'lucide-react'
 import { formatClock, formatDuration } from '../utils/formatters'
 
 export function Brand({ inverse = false }) {
@@ -19,7 +19,6 @@ export function ErrorState({ message = 'Something went wrong. Please try again.'
 export function DemoBanner() { return <div className="demo-banner"><span className="demo-pip" /><span><strong>Demo mode</strong> · Your progress is saved on this device. Server verification is not connected.</span></div> }
 export function InlineTag({ children, tone = 'default' }) { return <span className={`tag tag-${tone}`}>{children}</span> }
 export function MetricCard({ label, value, caption, accent = false }) { return <article className={`metric-card${accent ? ' metric-accent' : ''}`}><p>{label}</p><strong>{value}</strong>{caption && <span>{caption}</span>}</article> }
-export function ProgressMark({ done = false }) { return <span className={`progress-mark${done ? ' progress-done' : ''}`} aria-label={done ? 'Completed' : 'Not yet completed'}>{done && <Check size={12} />}</span> }
 export function CountdownDisplay({ seconds, status, running = false }) {
   const [displaySeconds, setDisplaySeconds] = useState(seconds)
   useEffect(() => {

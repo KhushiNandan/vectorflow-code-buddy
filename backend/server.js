@@ -71,7 +71,7 @@ const getMongoConnectionStatus = () => {
     2: 'connecting',
     3: 'disconnecting',
   };
-  return connectionStates[mongoose.connection.readyState] || 'unknown';
+  return connectionStates[mongoose.connection.readyState];
 };
 
 // Monitor MongoDB Atlas connection events

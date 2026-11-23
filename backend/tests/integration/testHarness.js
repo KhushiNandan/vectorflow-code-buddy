@@ -147,7 +147,6 @@ class IntegrationTestEnvironment {
     this.replSet = null;
     this.app = null;
     this.models = null;
-    this.securityMiddleware = null;
     this.googleTokenMap = new Map();
     this.originalVerifyIdToken = OAuth2Client.prototype.verifyIdToken;
     this.originalDotenvConfig = dotenv.config;
@@ -162,9 +161,6 @@ class IntegrationTestEnvironment {
       studentIds: new Set(),
       levelIds: new Set(),
       questionIds: new Set(),
-      roundIds: new Set(),
-      evaluationIds: new Set(),
-      transactionIds: new Set(),
     };
   }
 
@@ -250,7 +246,6 @@ class IntegrationTestEnvironment {
     // 5. Load real Express app and models, then synchronize real MongoDB indexes
     this.app = require('../../server');
     this.models = require('../../models');
-    this.securityMiddleware = require('../../middleware/securityMiddleware');
 
     const { Staff, Student, Level, Question, Round, Evaluation, Transaction } = this.models;
     await Promise.all([

@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
-const { Student, Staff, Admin, Volunteer } = require('../models');
+const { Student, Admin, Volunteer } = require('../models');
 
 const OBJECT_ID_HEX_REGEX = /^[a-fA-F0-9]{24}$/;
 

@@ -2,6 +2,8 @@
 
 Audit date: 2026-11-14. Source is the latest GitHub branch refs inspected through the read-only GitHub connector. The local Git fetch could not update remote refs in this environment; no branch was switched and no remote branch was changed.
 
+Update 2026-11-23: this document is a snapshot of the 2026-11-14 audit. Several findings below are now closed and are marked inline: wallet enforcement is implemented (Issue #1), the admin/volunteer frontend is merged (PR #3), and `npm test` runs the real wallet suite. Current state is main `d59eeb7` as of 2026-11-23.
+
 ## Branches inspected
 
 | Branch | Commit | Scope |
@@ -16,7 +18,7 @@ The frontend branch has one Vite entry point (`src/main.jsx`), one `BrowserRoute
 
 - Student: `/login`, `/register`, `/dashboard`, `/round`, `/result/:result`, `/records`, `/history`, `/profile`, `/wallet`.
 
-This branch contains only the student-facing application and its routes. Admin and volunteer frontend modules remain on Khushi's branch and are not imported by the student entry point. The student app has one `BrowserRouter` and a student provider. Its own centralized JSON client uses `VITE_API_BASE_URL`; page-level fetch calls are not used. Backend authorization remains authoritative.
+This branch contains only the student-facing application and its routes. Admin and volunteer frontend modules were merged into main in PR #3 (2026-11-22) and are now part of the application. The student app has one `BrowserRouter` and a student provider. Its own centralized JSON client uses `VITE_API_BASE_URL`; page-level fetch calls are not used. Backend authorization remains authoritative.
 
 ## Backend endpoints verified in source
 
@@ -31,7 +33,7 @@ These routes are mounted by `backend/server.js` in the inspected backend commit.
 | `GET /api/auth/me` | Student JWT; canonical student profile and competition fields. |
 | `GET /api/competition/config` | Student JWT; competition and six level configurations. |
 | `GET /api/rounds/level-info` | Student JWT; current level, wallet balance and level configuration. |
-| `POST /api/rounds/allocate` | Student JWT; no body; creates or returns a persistent year-matched question assignment. The controller does **not** check or debit entry risk. |
+| `POST /api/rounds/allocate` | Student JWT; no body; creates or returns a persistent year-matched question assignment. The controller atomically checks `walletBalance >= entryRiskAmount` and debits the entry stake (wallet enforcement implemented 2026-11-22; see Issue #1, closed). |
 | `GET /api/rounds/active` | Student JWT; active round, question snapshot and official timer state; `404 ROUND_NOT_ALLOCATED` when absent. |
 | `GET /api/student/rounds/history?page=&limit=` | Student JWT; own round history and evaluation summary. |
 | `GET /api/student/transactions?page=&limit=` | Student JWT; own wallet ledger. |
@@ -60,7 +62,7 @@ These routes are mounted by `backend/server.js` in the inspected backend commit.
 
 ## Backend issues requiring team action
 
-1. **Wallet enforcement is missing from student allocation.** `allocateQuestion` creates/returns a round without checking `walletBalance >= entryRiskAmount` or debiting the configured entry amount. Frontend-only checks are bypassable and are not financial enforcement. The student frontend enables a new real allocation only when the authenticated active-level response reports `entryRiskAmount === 0`; non-zero-risk levels remain blocked. Existing allocated rounds remain readable/continuable. This UI guard does not enforce financial safety against direct API callers. Likith must implement an atomic server-side entry check and debit, with an explicit insufficient-balance response, before non-zero-risk allocation can be enabled.
+1. **Wallet enforcement is missing from student allocation.** — **CLOSED 2026-11-22.** `allocateQuestion` now performs an atomic server-side entry check (`walletBalance >= entryRiskAmount`) and debit with a `STAKE_DEBIT` ledger entry, idempotency and a compensating refund, and returns an explicit insufficient-balance response. (Pre-fix state: allocation created/returned a round without checking or debiting; only the frontend UI guard blocked non-zero-risk levels, and it did not protect against direct API callers.)
 2. **Backend seed configuration conflicts with the previously approved competition rules.** The latest `seedLevels.js` initializes L1 risk ₹0 / payout ₹50; L2 ₹50 / ₹100; L3 ₹100 / ₹150; L4 ₹150 / ₹250; L5 ₹0 / ₹350; L6 ₹100 / ₹500. It also configures loss payouts and safe-zone amounts. These are configuration values only; this report does not infer net wallet deltas from them. Existing level documents are explicitly not overwritten by the seed script, so runtime values must be read from the API. This does not match the previously approved L1 ₹0 / L2–L6 ₹100 entry and ₹100 pass reward. The product owner and Likith must reconcile the desired rules with backend level configuration before competition entry is opened.
 3. **Volunteer roster endpoint is absent.** The backend can retrieve a round only by supplied USN. Volunteer dashboard consequently asks for a USN lookup and shows no fabricated roster/counts. If a roster is needed, Likith must add an authenticated assignment/list route and define its visibility/assignment rules.
 4. **Question input/output format fields are absent.** Backend question schema/response currently carries `statement`, `constraints`, `examples`, `difficulty`, `levelNumber` and ID; it does not return separate input/output format fields. Current volunteer/student views render only supplied data.
@@ -87,6 +89,6 @@ Do not copy real credentials into either example file or repository. Database co
 
 - Frontend production build: passed (`npm run build`).
 - Backend build/live API: not run; backend source is remote-only on `feature/backend` in this workspace.
-- Backend `npm test` is a placeholder that exits with an error. The branch defines `npm run test:integration`; it was not run because the backend checkout and its dependencies/database runtime are not available locally.
+- Backend `npm test` runs the real wallet-allocation suite (`backend/tests/walletAllocation.test.js`); `npm run test:integration` runs the integration suite. Neither was run during this audit because the backend checkout and its dependencies/database runtime are not available locally.
 - Browser/API integration: not live-tested; no configured environment values or reachable backend were supplied.
 - No commit, push, merge, branch switch or deployment was performed.

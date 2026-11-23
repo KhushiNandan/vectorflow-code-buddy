@@ -81,7 +81,6 @@ async function run() {
   let volunteerToken = null;
   let volunteerId = null;
   let adminToken = null;
-  let baseData = null;
 
   // Helpers that call real Express endpoints via Supertest
   const loginAdmin = async () => {
@@ -211,7 +210,7 @@ async function run() {
 
   try {
     await env.start();
-    baseData = await env.seedBaseData();
+    await env.seedBaseData();
 
     await runSuite('Suite A: Core Auth, Volunteer Provisioning & Student Registration + All 4 Academic Years Allocation', async () => {
       // Check health endpoint
