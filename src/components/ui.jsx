@@ -16,7 +16,6 @@ export function SectionHeading({ kicker, title, detail, action }) {
 export function LoadingState({ label = 'Loading your competition…' }) { return <div className="state-message"><LoaderCircle className="spin" size={20} aria-hidden="true" />{label}</div> }
 export function EmptyState({ title, detail, action }) { return <div className="empty-state"><CircleHelp size={24} /><h2>{title}</h2><p>{detail}</p>{action}</div> }
 export function ErrorState({ message = 'Something went wrong. Please try again.' }) { return <div role="alert" className="error-state"><CircleHelp size={17} />{message}</div> }
-export function DemoBanner() { return <div className="demo-banner"><span className="demo-pip" /><span><strong>Demo mode</strong> · Your progress is saved on this device. Server verification is not connected.</span></div> }
 export function InlineTag({ children, tone = 'default' }) { return <span className={`tag tag-${tone}`}>{children}</span> }
 export function MetricCard({ label, value, caption, accent = false }) { return <article className={`metric-card${accent ? ' metric-accent' : ''}`}><p>{label}</p><strong>{value}</strong>{caption && <span>{caption}</span>}</article> }
 export function CountdownDisplay({ seconds, status, running = false }) {
