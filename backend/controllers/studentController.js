@@ -2,6 +2,7 @@ const { Transaction, Round, Evaluation, Level } = require('../models');
 const {
   formatLevelResponse,
   formatRoundStudentResponse,
+  formatStudentTransactionResponse,
   computeTimerFields,
 } = require('./roundController');
 
@@ -83,22 +84,6 @@ const buildPaginationMeta = (page, limit, totalItems) => {
     hasPrevPage: totalPages > 0 && page > 1,
   };
 };
-
-/**
- * Format an immutable Transaction ledger record for student consumption.
- * Strictly excludes internal staff IDs (performedBy) and internal settlement keys.
- */
-const formatStudentTransactionResponse = (transaction) => ({
-  id: (transaction._id || '').toString(),
-  type: transaction.type,
-  status: transaction.status || 'SUCCESS',
-  amount: transaction.amount,
-  balanceAfter: transaction.balanceAfter,
-  levelNumber: transaction.levelNumber ?? null,
-  roundId: transaction.roundId ? transaction.roundId.toString() : null,
-  description: transaction.description,
-  timestamp: transaction.timestamp,
-});
 
 /**
  * Format an Evaluation summary safely for the owning student.
@@ -298,7 +283,6 @@ module.exports = {
   getStudentTransactions,
   getStudentRoundHistory,
   getCompetitionConfig,
-  formatStudentTransactionResponse,
   parsePaginationQuery,
   buildPaginationMeta,
 };

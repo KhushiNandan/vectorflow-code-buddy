@@ -148,9 +148,6 @@ export function createApiClient({ baseUrl = backendConfig.apiBaseUrl, getAccessT
     request,
     get(path, options = {}) { return request(path, { ...options, method: 'GET' }) },
     post(path, body, options = {}) { return request(path, { ...options, method: 'POST', body }) },
-    put(path, body, options = {}) { return request(path, { ...options, method: 'PUT', body }) },
-    patch(path, body, options = {}) { return request(path, { ...options, method: 'PATCH', body }) },
-    delete(path, options = {}) { return request(path, { ...options, method: 'DELETE' }) },
     setAccessTokenProvider(provider) {
       if (typeof provider !== 'function') throw new TypeError('Access token provider must be a function.')
       accessTokenProvider = provider
