@@ -21,7 +21,6 @@ function formatDate(value) {
 
 export default function HistoryPage() {
   const { state } = useStudent()
-  const isReal = state.auth?.mode === 'real'
   const [page, setPage] = useState(1)
   const [retry, setRetry] = useState(0)
   const [data, setData] = useState(null)
@@ -31,18 +30,16 @@ export default function HistoryPage() {
     let mounted = true
     setData(null)
     setError(null)
-    if (!isReal) return () => { mounted = false }
     backendCompetitionService.getRoundHistory({ page, limit: 20 })
       .then(result => { if (mounted) setData(result) })
       .catch(loadError => { if (mounted) setError(loadError) })
     return () => { mounted = false }
-  }, [isReal, page, retry])
+  }, [page, retry])
 
   return <div className="page history-page">
     <SectionHeading kicker="Your competition journey" title="Round history." detail="Assigned questions and evaluation summaries reported by the competition backend." />
     {error && <div className="error-state" role="alert"><p>{error.message || 'Round history is unavailable.'}</p><button className="button button-dark" type="button" onClick={() => setRetry(value => value + 1)}>Try again</button></div>}
-    {isReal && !data && !error && <LoadingState label="Loading your round history…" />}
-    {!isReal && <EmptyState title="Demo history is not simulated." detail="The local demo previews a current assignment and static outcome screens, but it does not create past evaluations or wallet activity." />}
+    {!data && !error && <LoadingState label="Loading your round history…" />}
     {data && !error && (data.rounds?.length ? <>
       <div className="history-list">
         {data.rounds.map(round => {

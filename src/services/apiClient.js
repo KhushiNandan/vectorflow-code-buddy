@@ -160,5 +160,4 @@ export function createApiClient({ baseUrl = backendConfig.apiBaseUrl, getAccessT
 }
 
 // Real authentication and verified competition adapters share this transport.
-// Demo services remain isolated on their local mock adapters.
 export const apiClient = createApiClient()

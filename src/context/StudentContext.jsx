@@ -1,11 +1,4 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { authService } from '../services/authService'
-import { competitionConfigurationService } from '../services/competitionConfigurationService'
-import { competitionService } from '../services/competitionService'
-import { evaluationService } from '../services/evaluationService'
-import { levelConfigurationService } from '../services/levelConfigurationService'
-import { studentService } from '../services/studentService'
-import { walletService } from '../services/walletService'
 import { studentAuthenticationService } from '../services/studentAuthenticationService'
 import { backendCompetitionService } from '../services/backendCompetitionService'
 
@@ -13,7 +6,7 @@ const StudentContext = createContext(null)
 async function loadStudentState() {
   const realSession = await studentAuthenticationService.restoreSession()
   if (realSession) {
-    if (!realSession.auth?.signedIn) return { ...realSession, competition: null, levelConfigurations: [], realSession: true }
+    if (!realSession.auth?.signedIn) return { ...realSession, competition: null, levelConfigurations: [] }
     const requests = await Promise.allSettled([
       backendCompetitionService.getConfiguration(),
       backendCompetitionService.getLevelInfo(),
@@ -23,7 +16,7 @@ async function loadStudentState() {
       backendCompetitionService.getMyRank(),
     ])
     if (!studentAuthenticationService.hasRealSession && studentAuthenticationService.hasRealMode) {
-      return { auth: { signedIn: false, mode: 'real' }, pendingIdentity: null, student: null, sessionExpired: true, competition: null, levelConfigurations: [], realSession: true }
+      return { auth: { signedIn: false, mode: 'real' }, pendingIdentity: null, student: null, sessionExpired: true, competition: null, levelConfigurations: [] }
     }
     const [configuration, levelInfo, activeRound, roundHistory, wallet, leaderboard] = requests.map(result => result.status === 'fulfilled' ? result.value : null)
     const dataErrors = Object.fromEntries(requests.map((result, index) => [
@@ -49,23 +42,9 @@ async function loadStudentState() {
       wallet,
       leaderboard,
       dataErrors,
-      realSession: true,
     }
   }
-  const [session, profile, progress, wallet, evaluations, configuration, levelConfigurations] = await Promise.all([
-    authService.getSession(), studentService.getProfile(), competitionService.getProgress(), walletService.getSummary(), evaluationService.getStatuses(),
-    competitionConfigurationService.getConfiguration(), levelConfigurationService.getLevels(),
-  ])
-  const student = profile && progress && wallet ? {
-    ...profile,
-    ...progress,
-    competitionStatus: progress.status,
-    walletBalance: wallet.balance,
-    totalEarned: wallet.totalRewardsEarned,
-    totalEntryFeesPaid: wallet.totalEntryFeesPaid,
-    evaluationStatuses: evaluations,
-  } : null
-  return { ...session, student, competition: configuration, levelConfigurations, realSession: false }
+  return { auth: { signedIn: false, mode: null }, pendingIdentity: null, student: null, competition: null, levelConfigurations: [] }
 }
 
 export function StudentProvider({ children }) {

@@ -109,7 +109,6 @@ export const studentAuthenticationService = {
     }
   },
   async signOut() { clearToken(); clearMode() },
-  async useDemoMode() { clearToken(); clearMode() },
 }
 
 function storedToken() {
